@@ -60,7 +60,8 @@ function paginaAbastecimentos(
 ) {
   const cliques = [];
   const edicoes = [];
-  const itens = itensIniciais.map((item) => ({ ...item }));
+  const produtosItens = itensIniciais.map((item) => item.produto || "ETANOL HIDRATADO");
+  const itens = itensIniciais.map(({ produto: _produto, ...item }) => ({ ...item }));
   const produtosConfirmados = [];
   let lado = "esquerda";
   let campoEditando = null;
@@ -145,7 +146,7 @@ function paginaAbastecimentos(
     return itens.map((item, indice) => {
       const valores = lado === "esquerda"
         ? [
-          "ETANOL HIDRATADO",
+          produtosItens[indice] || "ETANOL HIDRATADO",
           item.qtd,
           item.custo || "",
           item.placa && !ocultarPlacaNaDescricaoCentro ? `VEÍCULO PLACA ${item.placa}` : "",
@@ -219,6 +220,7 @@ function paginaAbastecimentos(
     cliques.push("confirmar produto do pedido");
     produtosConfirmados.push(produtoSelecionado);
     itens.push({ qtd: 1791, placa: "", atual: "" });
+    produtosItens.push(produtoSelecionado);
     janelaPedido.visible = false;
     confirmarPedido.visible = false;
     produtoSelecionado = null;
@@ -503,7 +505,7 @@ test("aguarda a seleção Ajax do centro de custo antes de confirmar", async () 
   }
 });
 
-test("fecha automaticamente Ajax Error e devolve o controle da página", async () => {
+test("fecha Ajax Error e interrompe a operação sem confirmar sucesso", async () => {
   const pagina = paginaAbastecimentos(
     { UFG8C56: ["204 VOLKSWAGEN POLO (UFG8C56)"] },
     ["ETANOL HIDRATADO"],
@@ -525,10 +527,11 @@ test("fecha automaticamente Ajax Error e devolve o controle da página", async (
     ],
   });
 
-  assert.equal(resultado.ok, true, resultado.error);
+  assert.equal(resultado.ok, false);
   assert.equal(pagina.itens[0].placa, "UFG8C56");
   assert.equal(pagina.cliques.includes("ok ajax error"), true);
-  assert.match(resultado.etapas.join("\n"), /Ajax Error fechado automaticamente/);
+  assert.match(resultado.error, /operação atual não foi confirmada/);
+  assert.match(resultado.etapas.join("\n"), /Ajax Error fechado; a execução será interrompida/);
 });
 
 test("pausa sem escolher quando a placa possui centros de custo duplicados", async () => {
@@ -603,6 +606,60 @@ test("retoma o primeiro abastecimento que já está na grade após uma pausa", a
   ]);
 });
 
+test("recusa retomar quando a grade pertence a outro combustível", async () => {
+  const pagina = paginaAbastecimentos(
+    {},
+    ["ETANOL HIDRATADO", "ÓLEO DIESEL S-10"],
+    false,
+    0,
+    [{ qtd: 14, placa: "ABC1D23", atual: 120, produto: "ÓLEO DIESEL S-10" }],
+  );
+  globalThis.document = pagina;
+
+  const resultado = await executarFaseNoFrame({
+    fase: "abastecimentos",
+    indiceAbastecimentoInicial: 1,
+    intervaloRequisicaoMs: 0,
+    timeoutMs: 150,
+    abastecimentos: [
+      { placa: "ABC1D23", litros: 14, km: 120, produto: "ETANOL HIDRATADO" },
+    ],
+  });
+
+  assert.equal(resultado.ok, false);
+  assert.match(resultado.error, /LINHA_INCOMPATIVEL.*DIESEL.*ETANOL/);
+  assert.deepEqual(pagina.edicoes, []);
+});
+
+test("recusa QTD quando a ordem das placas mudou", async () => {
+  const pagina = paginaAbastecimentos(
+    {},
+    ["ETANOL HIDRATADO"],
+    false,
+    0,
+    [
+      { qtd: 10, placa: "XYZ9Z99", atual: 200 },
+      { qtd: 20, placa: "ABC1D23", atual: 100 },
+    ],
+  );
+  globalThis.document = pagina;
+
+  const resultado = await executarFaseNoFrame({
+    fase: "abastecimentos",
+    indiceAbastecimentoInicial: 2,
+    intervaloRequisicaoMs: 0,
+    timeoutMs: 150,
+    abastecimentos: [
+      { placa: "ABC1D23", litros: 10, km: 100, produto: "ETANOL HIDRATADO" },
+      { placa: "XYZ9Z99", litros: 20, km: 200, produto: "ETANOL HIDRATADO" },
+    ],
+  });
+
+  assert.equal(resultado.ok, false);
+  assert.match(resultado.error, /LINHA_INCOMPATIVEL.*item 1 pertence à placa XYZ9Z99/);
+  assert.deepEqual(pagina.edicoes, []);
+});
+
 test("repete F2 Produto quando o SCPI ignora a primeira abertura do menu", async () => {
   const pagina = paginaAbastecimentos(
     {},
@@ -654,7 +711,7 @@ test("aguarda a placa aparecer na pesquisa de centro de custo", async () => {
   assert.equal(pagina.itens[0].placa, "ABC1D23");
 });
 
-test("clica em Sim e mantém o KM quando o SCPI pede confirmação de virada", async () => {
+test("pausa sem clicar quando o SCPI pede confirmação de virada", async () => {
   const pagina = paginaAbastecimentos(
     {},
     ["ETANOL HIDRATADO"],
@@ -675,13 +732,15 @@ test("clica em Sim e mantém o KM quando o SCPI pede confirmação de virada", a
   });
 
   assert.equal(resultado.ok, true);
-  assert.equal(resultado.indiceAbastecimento, 1);
+  assert.equal(resultado.paused, true);
+  assert.equal(resultado.indiceAbastecimento, 0);
   assert.equal(pagina.itens[0].atual, 120);
-  assert.equal(pagina.cliques.includes("sim virada de velocímetro"), true);
-  assert.match(resultado.etapas.join("\n"), /virada confirmada com Sim/);
+  assert.equal(pagina.cliques.includes("sim virada de velocímetro"), false);
+  assert.equal(pagina.cliques.includes("não virada de velocímetro"), false);
+  assert.match(resultado.etapas.join("\n"), /Pausa: .*Escolha Sim ou Não/);
 });
 
-test("insere KM do XLSX menor que o KM Anterior e confirma a virada", async () => {
+test("insere KM menor e pausa para a decisão humana de virada", async () => {
   const pagina = paginaAbastecimentos(
     {},
     ["ETANOL HIDRATADO"],
@@ -703,9 +762,11 @@ test("insere KM do XLSX menor que o KM Anterior e confirma a virada", async () =
   });
 
   assert.equal(resultado.ok, true);
+  assert.equal(resultado.paused, true);
   assert.equal(pagina.itens[0].atual, 300);
-  assert.equal(pagina.cliques.includes("sim virada de velocímetro"), true);
-  assert.match(resultado.etapas.join("\n"), /virada confirmada com Sim/);
+  assert.equal(pagina.cliques.includes("sim virada de velocímetro"), false);
+  assert.equal(pagina.cliques.includes("não virada de velocímetro"), false);
+  assert.match(resultado.etapas.join("\n"), /Escolha Sim ou Não/);
 });
 
 test("mantém KM menor sem alteração quando o modo conservador está ativo", async () => {
@@ -759,7 +820,7 @@ test("permite KM do XLSX igual ao KM Anterior", async () => {
   assert.equal(pagina.itens[0].atual, 300);
 });
 
-test("confirma automaticamente o aviso de quilometragem muito alta", async () => {
+test("pausa no aviso de quilometragem muito alta", async () => {
   const pagina = paginaAbastecimentos(
     {},
     ["ETANOL HIDRATADO"],
@@ -782,12 +843,13 @@ test("confirma automaticamente o aviso de quilometragem muito alta", async () =>
   });
 
   assert.equal(resultado.ok, true, resultado.error);
+  assert.equal(resultado.paused, true);
   assert.equal(pagina.itens[0].atual, 900000);
-  assert.equal(pagina.cliques.includes("ok quilometragem muito alta"), true);
-  assert.match(resultado.etapas.join("\n"), /confirmado automaticamente com OK/);
+  assert.equal(pagina.cliques.includes("ok quilometragem muito alta"), false);
+  assert.match(resultado.etapas.join("\n"), /quilometragem muito alta.*clique em OK manualmente/i);
 });
 
-test("retoma modal pendente com Sim e conserva o KM já correto", async () => {
+test("mantém modal de virada pendente para decisão humana", async () => {
   const pagina = paginaAbastecimentos(
     {},
     ["ETANOL HIDRATADO"],
@@ -825,8 +887,10 @@ test("retoma modal pendente com Sim e conserva o KM já correto", async () => {
     });
 
     assert.equal(resultado.ok, true, resultado.error);
+    assert.equal(resultado.paused, true);
     assert.equal(pagina.itens[0].atual, 300);
-    assert.equal(pagina.cliques.includes("sim virada de velocímetro"), true);
+    assert.equal(pagina.cliques.includes("sim virada de velocímetro"), false);
+    assert.equal(pagina.cliques.includes("não virada de velocímetro"), false);
   } finally {
     delete globalThis.Ext;
   }
@@ -926,12 +990,13 @@ test("grava KM e QTD diretamente pelo ExtJS quando as células não abrem editor
       return true;
     },
   };
+  let pluginAtivo = plugin;
   globalThis.Ext = {
     ComponentQuery: {
       query: () => [{
         getView: () => view,
-        findPlugin: () => plugin,
-        getPlugins: () => [plugin],
+        findPlugin: () => pluginAtivo,
+        getPlugins: () => pluginAtivo ? [pluginAtivo] : [],
         getVisibleColumnManager: () => ({ getColumns: () => colunas }),
       }],
     },
@@ -964,6 +1029,26 @@ test("grava KM e QTD diretamente pelo ExtJS quando as células não abrem editor
       "beforeedit", "validateedit", "edit",
       "beforeedit", "validateedit", "edit",
     ]);
+
+    pluginAtivo = null;
+    pagina.itens[0].atual = "";
+    pagina.itens[0].qtd = 1642;
+    servidor.atual = "";
+    servidor.qtd = 1642;
+    const semPlugin = await executarFaseNoFrame({
+      fase: "abastecimentos",
+      intervaloRequisicaoMs: 0,
+      timeoutMs: 150,
+      abastecimentos: [
+        { placa: "ABC1D23", litros: 14, km: 120, produto: "ETANOL HIDRATADO" },
+      ],
+    });
+    assert.equal(semPlugin.ok, true, semPlugin.error);
+    assert.equal(semPlugin.partial, true);
+    assert.equal(semPlugin.falhasAbastecimentos.length, 2);
+    assert.equal(pagina.itens[0].atual, "");
+    assert.equal(pagina.itens[0].qtd, 1642);
+    assert.equal(transacoes.length, 6);
   } finally {
     delete globalThis.Ext;
   }
@@ -1283,8 +1368,9 @@ test("pula um KM irrecuperável e continua os itens e as QTDs", async () => {
   });
 
   assert.equal(resultado.ok, true, resultado.error);
-  assert.equal(resultado.indiceAbastecimento, 2);
+  assert.equal(resultado.indiceAbastecimento, 0);
   assert.equal(resultado.indiceQuantidadeAbastecimento, 2);
+  assert.equal(resultado.partial, true);
   assert.equal(resultado.falhasAbastecimentos.length, 1);
   assert.equal(pagina.itens[0].atual, "");
   assert.equal(pagina.itens[1].atual, 50000);
@@ -1292,8 +1378,8 @@ test("pula um KM irrecuperável e continua os itens e as QTDs", async () => {
   assert.equal(pagina.itens[1].qtd, 14);
   assert.deepEqual(globalThis.__scriptPrefeituraProgresso, {
     fase: "abastecimentos",
-    tipo: "Concluído",
-    atual: 2,
+    tipo: "Pendências",
+    atual: 1,
     total: 2,
     etapa: "1 campo(s) pulado(s)",
   });
@@ -1359,7 +1445,7 @@ test("detalha item, placa, etapa e motivo de cada falha da conferência", async 
   );
 });
 
-test("verifica KM Atual, confirma viradas com Sim e continua até o último item", async () => {
+test("verifica KM Atual e pausa na primeira confirmação de virada", async () => {
   const pagina = paginaAbastecimentos(
     {},
     ["ETANOL HIDRATADO"],
@@ -1385,11 +1471,10 @@ test("verifica KM Atual, confirma viradas com Sim e continua até o último item
   });
 
   assert.equal(resultado.ok, true, resultado.error);
-  assert.deepEqual(pagina.itens.map((item) => item.atual), [343596, 250000]);
-  assert.equal(pagina.cliques.filter((item) => item === "sim virada de velocímetro").length, 2);
-  assert.equal(resultado.relatorioConferencia.corrigidos, 2);
-  assert.equal(resultado.relatorioConferencia.viradasConfirmadas, 2);
-  assert.equal(resultado.relatorioConferencia.falhas.length, 0);
+  assert.equal(resultado.paused, true);
+  assert.deepEqual(pagina.itens.map((item) => item.atual), [343596, 300000]);
+  assert.equal(pagina.cliques.filter((item) => item === "sim virada de velocímetro").length, 0);
+  assert.match(resultado.etapas.join("\n"), /Escolha Sim ou Não/);
 });
 
 test("verifica KM em modo conservador sem reduzir o hodômetro", async () => {
@@ -1595,7 +1680,7 @@ test("corrige placas por clique sem chamar seleção ExtJS bloqueante", async ()
   }
 });
 
-test("suprime MessageDlg bloqueante e confirma a virada ao corrigir a placa", async () => {
+test("suprime MessageDlg bloqueante e pausa na virada ao corrigir a placa", async () => {
   const pagina = paginaAbastecimentos(
     { QSQ1D27: ["198 CHEVROLET SPIN (QSQ1D27)"] },
     ["ETANOL HIDRATADO"],
@@ -1623,14 +1708,16 @@ test("suprime MessageDlg bloqueante e confirma a virada ao corrigir a placa", as
     assert.equal(resultado.ok, true, resultado.error);
     assert.equal(pagina.itens[0].placa, "QSQ1D27");
     assert.deepEqual(alertas, []);
-    assert.equal(pagina.cliques.includes("sim virada de velocímetro"), true);
-    assert.match(resultado.etapas.join("\n"), /confirmada automaticamente com Sim/);
+    assert.equal(resultado.paused, true);
+    assert.equal(pagina.cliques.includes("sim virada de velocímetro"), false);
+    assert.equal(pagina.cliques.includes("não virada de velocímetro"), false);
+    assert.match(resultado.etapas.join("\n"), /Escolha Sim ou Não/);
   } finally {
     delete globalThis.alert;
   }
 });
 
-test("suprime MessageDlg e recusa a virada ao corrigir placa no modo conservador", async () => {
+test("suprime MessageDlg e também pausa no modo conservador", async () => {
   const pagina = paginaAbastecimentos(
     { QSQ1D27: ["198 CHEVROLET SPIN (QSQ1D27)"] },
     ["ETANOL HIDRATADO"],
@@ -1659,9 +1746,10 @@ test("suprime MessageDlg e recusa a virada ao corrigir placa no modo conservador
     assert.equal(resultado.ok, true, resultado.error);
     assert.equal(pagina.itens[0].placa, "QSQ1D27");
     assert.deepEqual(alertas, []);
-    assert.equal(pagina.cliques.includes("não virada de velocímetro"), true);
+    assert.equal(resultado.paused, true);
+    assert.equal(pagina.cliques.includes("não virada de velocímetro"), false);
     assert.equal(pagina.cliques.includes("sim virada de velocímetro"), false);
-    assert.match(resultado.etapas.join("\n"), /recusada automaticamente com Não pelo modo conservador/);
+    assert.match(resultado.etapas.join("\n"), /Escolha Sim ou Não/);
   } finally {
     delete globalThis.alert;
   }

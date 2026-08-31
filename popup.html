@@ -107,6 +107,11 @@
             <span><strong>Abastecimentos</strong><small>Carregar XLSX, preencher lançamentos e fazer conferências</small></span>
             <span class="seta" aria-hidden="true">›</span>
           </button>
+          <button class="cartao-fluxo" type="button" data-abrir-painel="documentacao" aria-controls="painel-documentacao">
+            <span class="icone-fluxo" aria-hidden="true">D</span>
+            <span><strong>Documentação</strong><small>Consultar padrões, orientações e materiais de apoio</small></span>
+            <span class="seta" aria-hidden="true">›</span>
+          </button>
         </div>
 
         <details class="manutencao">
@@ -152,7 +157,7 @@
           <input id="arquivo-abastecimentos" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           <fieldset>
             <legend>Tratamento de KM menor</legend>
-            <label class="opcao-km"><input id="permitir-virada-km" type="checkbox" checked><span>Permitir KM menor que o anterior e confirmar a virada com Sim</span></label>
+            <label class="opcao-km"><input id="permitir-virada-km" type="checkbox" checked><span>Permitir KM menor e pausar para eu escolher Sim ou Não</span></label>
             <p class="nota-seguranca">Desmarque para manter o KM anterior quando o valor da planilha for menor.</p>
           </fieldset>
           <div class="acoes-abastecimento">
@@ -170,6 +175,21 @@
             <button id="conferir-km" class="acao-secundaria" type="button" disabled>Conferir e corrigir KM Atual</button>
           </div>
         </details>
+      </section>
+
+      <section id="painel-documentacao" class="tela" hidden>
+        <div class="cabecalho-secao">
+          <button class="voltar" type="button" data-voltar aria-label="Voltar ao início">‹</button>
+          <div><h2>Documentação</h2><p class="introducao-secao">Consulte os materiais antes de preparar ou importar os dados.</p></div>
+        </div>
+
+        <div class="escolhas">
+          <a class="cartao-fluxo" href="output/pdf/Padrao_XLSX_Abastecimentos.pdf" target="_blank" rel="noopener">
+            <span class="icone-fluxo" aria-hidden="true">X</span>
+            <span><strong>Padrão do XLSX de abastecimentos</strong><small>Colunas, formatos aceitos, exemplos, maior KM e erros comuns</small></span>
+            <span class="seta" aria-hidden="true">›</span>
+          </a>
+        </div>
       </section>
     </main>
 

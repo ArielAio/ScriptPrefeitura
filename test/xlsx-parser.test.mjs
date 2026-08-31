@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import vm from "node:vm";
+import { readFile } from "node:fs/promises";
 import {
   aplicarMaiorKmPorPlaca,
   lerAbastecimentosXlsx,
@@ -30,6 +32,25 @@ test("rejeita a planilha inteira quando uma linha relevante é inválida", () =>
   ]), /linha 3: placa inválida.*KM inválido.*combustível não informado.*litros inválidos/);
 });
 
+test("rejeita números ambíguos, notação científica e KM fora da faixa segura", () => {
+  assert.throws(() => normalizarAbastecimentos([
+    ["Placa", "KM", "Combustível", "Litros"],
+    ["ABC1D23", "9007199254740993", "ETANOL", 10],
+  ]), /KM inválido/);
+  assert.throws(() => normalizarAbastecimentos([
+    ["Placa", "KM", "Combustível", "Litros"],
+    ["ABC1D23", 100, "ETANOL", "1e3"],
+  ]), /litros inválidos/);
+});
+
+test("limita o lote a 500 abastecimentos", () => {
+  const linhas = [["Placa", "KM", "Combustível", "Litros"]];
+  for (let indice = 0; indice < 501; indice += 1) {
+    linhas.push(["ABC1D23", indice, "ETANOL", 10]);
+  }
+  assert.throws(() => normalizarAbastecimentos(linhas), /no máximo 500 abastecimentos/);
+});
+
 test("recalcula o maior KM por placa em dados antigos armazenados", () => {
   assert.deepEqual(aplicarMaiorKmPorPlaca([
     { placa: "abc-1d23", km: 50, litros: 10, produto: "ETANOL" },
@@ -54,5 +75,28 @@ test("lê a primeira aba com as quatro colunas obrigatórias", async () => {
   const arquivo = { name: "dados.xlsx", size: 100, arrayBuffer: async () => new ArrayBuffer(0) };
   assert.deepEqual(await lerAbastecimentosXlsx(arquivo, leitor), [
     { placa: "ABC1D23", km: 100, litros: 12, produto: "ETANOL HIDRATADO" },
+  ]);
+});
+
+test("lê um XLSX real gerado pela cópia vendorizada do SheetJS", async () => {
+  const codigoSheetJs = await readFile(new URL("../vendor/xlsx.mini.min.js", import.meta.url), "utf8");
+  const contexto = { Uint8Array, ArrayBuffer, TextDecoder, TextEncoder };
+  vm.runInNewContext(codigoSheetJs, contexto);
+  const leitor = contexto.XLSX;
+  const pasta = leitor.utils.book_new();
+  const planilha = leitor.utils.aoa_to_sheet([
+    ["Placa", "KM", "Combustível", "Litros"],
+    ["ABC1D23", 100, "ETANOL", 12.5],
+  ]);
+  leitor.utils.book_append_sheet(pasta, planilha, "Abastecimentos");
+  const conteudo = leitor.write(pasta, { type: "array", bookType: "xlsx" });
+  const arquivo = {
+    name: "memoria.xlsx",
+    size: conteudo.byteLength,
+    arrayBuffer: async () => conteudo,
+  };
+
+  assert.deepEqual(await lerAbastecimentosXlsx(arquivo, leitor), [
+    { placa: "ABC1D23", km: 100, litros: 12.5, produto: "ETANOL" },
   ]);
 });

@@ -1,4 +1,9 @@
 import { executarFaseNoFrame } from "./automation.js";
+import {
+  CHAVES_ABASTECIMENTOS,
+  rotuloAbastecimentos,
+  vincularAbaAbastecimentos,
+} from "./abastecimentos-state.js";
 import { cleanProductDescription } from "./ocr-parser.js";
 import { selecionarAbaScpi } from "./scpi-tab.js";
 import { aplicarMaiorKmPorPlaca, lerAbastecimentosXlsx } from "./xlsx-parser.js";
@@ -23,6 +28,7 @@ const telaInicio = document.querySelector("#tela-inicio");
 const paineis = {
   solicitacoes: document.querySelector("#painel-solicitacoes"),
   abastecimentos: document.querySelector("#painel-abastecimentos"),
+  documentacao: document.querySelector("#painel-documentacao"),
 };
 document.querySelector("#versao").textContent = `v${chrome.runtime.getManifest().version}`;
 let executando = false;
@@ -108,12 +114,6 @@ async function limparDadosExtensao() {
   mostrarProgresso(null);
 }
 
-function rotuloAbastecimentos(indiceItens, indiceQuantidades, total) {
-  if (indiceItens < total) return `Continuar abastecimentos (${indiceItens}/${total})`;
-  if (indiceQuantidades < total) return `Continuar QTDs (${indiceQuantidades}/${total})`;
-  return `Preenchimento concluído (${total}/${total})`;
-}
-
 async function enviarControle(controle) {
   const aba = selecionarAbaScpi(await chrome.tabs.query({}));
   if (!aba) {
@@ -176,6 +176,9 @@ async function executar(fase) {
       "indiceAbastecimento",
       "indiceQuantidadeAbastecimento",
       "centroCustoPendente",
+      "abaAbastecimentosId",
+      "falhasAbastecimentos",
+      "kmsIgnorados",
     ]);
     const produtos = (dados.produtosSolicitacao || []).map((produto) => ({
       description: cleanProductDescription(produto.description),
@@ -190,14 +193,19 @@ async function executar(fase) {
       || item.km !== abastecimentosSalvos[indice]?.km);
     let indiceAbastecimentoInicial = dados.indiceAbastecimento || 0;
     let indiceQuantidadeAbastecimentoInicial = dados.indiceQuantidadeAbastecimento || 0;
+    let abaAbastecimentosId = dados.abaAbastecimentosId ?? null;
     if (cacheKmDesatualizado) {
       indiceAbastecimentoInicial = 0;
       indiceQuantidadeAbastecimentoInicial = 0;
+      abaAbastecimentosId = null;
       await chrome.storage.local.set({
         abastecimentosSaida: abastecimentos,
         indiceAbastecimento: 0,
         indiceQuantidadeAbastecimento: 0,
         centroCustoPendente: null,
+        abaAbastecimentosId: null,
+        falhasAbastecimentos: [],
+        kmsIgnorados: [],
       });
     }
     if (fase === "produtos" && !produtos.length) {
@@ -213,6 +221,18 @@ async function executar(fase) {
     const aba = selecionarAbaScpi(await chrome.tabs.query({}));
     if (!aba) {
       throw new Error("Abra o SCPI 9.0 antes de executar.");
+    }
+    const faseAbastecimentos = [
+      "abastecimentos",
+      "conferir_quantidades",
+      "conferir_placas",
+      "conferir_km",
+    ].includes(fase);
+    if (faseAbastecimentos) {
+      const abaVinculada = vincularAbaAbastecimentos(abaAbastecimentosId, aba.id);
+      if (abaAbastecimentosId == null) {
+        await chrome.storage.local.set({ abaAbastecimentosId: abaVinculada });
+      }
     }
 
     const promessaExecucao = chrome.scripting.executeScript({
@@ -266,11 +286,14 @@ async function executar(fase) {
         indiceAbastecimento: progresso,
         indiceQuantidadeAbastecimento: progressoQuantidades,
         centroCustoPendente: resultado.centroCustoPendente || null,
+        falhasAbastecimentos: resultado.falhasAbastecimentos || [],
+        kmsIgnorados: resultado.kmsIgnorados || [],
       });
       importarAbastecimentos.textContent = rotuloAbastecimentos(
         progresso,
         progressoQuantidades,
         abastecimentos.length,
+        resultado.falhasAbastecimentos,
       );
       mostrarCentroCustoPendente(resultado.centroCustoPendente);
       const quantidadesConcluidas = progressoQuantidades >= abastecimentos.length;
@@ -291,6 +314,12 @@ async function executar(fase) {
         centroCustoPendente: resultado.centroCustoPendente || null,
       });
       mostrarCentroCustoPendente(resultado.centroCustoPendente);
+    }
+    if (["conferir_quantidades", "conferir_placas", "conferir_km"].includes(fase)) {
+      await chrome.storage.local.set({
+        falhasAbastecimentos: resultado.falhasAbastecimentos || [],
+        kmsIgnorados: resultado.kmsIgnorados || [],
+      });
     }
     if (!resultado.ok) throw new Error(resultado.error || "O sistema exibiu uma tela inesperada.");
 
@@ -448,6 +477,10 @@ arquivoAbastecimentos.addEventListener("change", async () => {
   bloquearImportacao(true);
   mostrarCentroCustoPendente(null);
   try {
+    if (await existeExecucaoNaAba()) {
+      throw new Error("Finalize ou cancele a execução atual antes de trocar o XLSX.");
+    }
+    await chrome.storage.local.remove(CHAVES_ABASTECIMENTOS);
     const arquivo = arquivoAbastecimentos.files?.[0];
     const abastecimentos = await lerAbastecimentosXlsx(arquivo);
     const placas = new Set(abastecimentos.map((item) => item.placa));
@@ -457,6 +490,9 @@ arquivoAbastecimentos.addEventListener("change", async () => {
       indiceQuantidadeAbastecimento: 0,
       centroCustoPendente: null,
       arquivoAbastecimentos: arquivo.name,
+      abaAbastecimentosId: null,
+      falhasAbastecimentos: [],
+      kmsIgnorados: [],
     });
     temAbastecimentos = true;
     importarAbastecimentos.textContent = `Preencher ${abastecimentos.length} abastecimentos`;
@@ -472,7 +508,7 @@ permitirViradaKm.addEventListener("change", async () => {
   await chrome.storage.local.set({ permitirViradaKm: permitirViradaKm.checked });
   mostrar(
     permitirViradaKm.checked
-      ? "Virada de velocímetro ativada: KM menor será inserido e confirmado com Sim."
+      ? "KM menor será inserido e a execução pausará para você escolher Sim ou Não."
       : "Modo conservador ativado: KM menor que o anterior será mantido sem alteração.",
     "sucesso",
   );
@@ -511,8 +547,16 @@ chrome.storage.local.get([
   "indiceQuantidadeAbastecimento",
   "arquivoAbastecimentos",
   "permitirViradaKm",
+  "abaAbastecimentosId",
+  "falhasAbastecimentos",
+  "kmsIgnorados",
 ]).then((dados) => {
-  const { produtoPendente, centroCustoPendente, abastecimentosSaida = [] } = dados;
+  const {
+    produtoPendente,
+    centroCustoPendente,
+    abastecimentosSaida = [],
+    falhasAbastecimentos = [],
+  } = dados;
   mostrarProdutoPendente(produtoPendente);
   mostrarCentroCustoPendente(centroCustoPendente);
   permitirViradaKm.checked = dados.permitirViradaKm !== false;
@@ -523,6 +567,7 @@ chrome.storage.local.get([
       dados.indiceAbastecimento || 0,
       dados.indiceQuantidadeAbastecimento || 0,
       abastecimentosSaida.length,
+      falhasAbastecimentos,
     );
   }
   bloquearImportacao(false);
@@ -532,6 +577,11 @@ chrome.storage.local.get([
   } else if (centroCustoPendente) {
     abrirPainel("abastecimentos");
     mostrar(`Escolha manualmente o centro de custo da placa ${centroCustoPendente.placa} e confirme no SCPI.`, "aviso");
+  } else if (temAbastecimentos && falhasAbastecimentos.length) {
+    mostrar(
+      `${dados.arquivoAbastecimentos || "XLSX"}: ${falhasAbastecimentos.length} campo(s) pendente(s) para conferir novamente.`,
+      "aviso",
+    );
   } else if (temAbastecimentos) mostrar(`${dados.arquivoAbastecimentos || "XLSX"}: dados prontos para continuar.`, "sucesso");
   else if (abastecimentosSaida.length) mostrar("Selecione novamente o XLSX para carregar também a coluna Combustível.", "aviso");
 });

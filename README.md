@@ -5,6 +5,11 @@ autenticada do SCPI 9.0. A extensão também possui um leitor local de fotos de
 orçamentos. O OCR é executado pelo macOS e nenhuma imagem é enviada à internet.
 Nenhuma fase salva dados.
 
+Na tela inicial, **Documentação** reúne os materiais de apoio incluídos na
+extensão. O primeiro documento disponível é **Padrão do XLSX de
+abastecimentos**, com as colunas obrigatórias, formatos aceitos, exemplos,
+regra do maior KM por placa e correções para os erros mais comuns.
+
 O projeto automatiza tarefas repetitivas, mas mantém a conferência humana antes
 da gravação definitiva no SCPI. Ele não armazena credenciais, planilhas ou fotos
 no repositório e não é uma extensão oficial da Fiorilli ou do município.
@@ -86,18 +91,18 @@ de abrir **F3 - C.Custo**, a extensão seleciona a célula da linha-alvo pelo
 fluxo normal da grade e confirma que o registro ficou ativo; o fluxo não avança
 se o SCPI mantiver outra linha selecionada. Essa proteção também é aplicada na
 primeira importação completa, antes de preencher cada centro de custo.
-A opção **Permitir KM menor que o anterior e confirmar a virada com Sim** fica
-ativada por padrão. Se a troca da placa fizer o SCPI avisar que o **KM Atual é
-menor que o KM Anterior**, a extensão responde **Sim** quando a opção estiver
-ativada e **Não** no modo conservador. O erro intermediário de `MessageDlg`
-bloqueante do uniGUI não é exibido quando essa confirmação estiver disponível.
+A opção **Permitir KM menor e pausar para eu escolher Sim ou Não** fica ativada
+por padrão. Se a troca da placa fizer o SCPI avisar que o **KM Atual é menor que
+o KM Anterior**, a extensão deixa a confirmação aberta, pausa e aguarda a sua
+decisão. No modo conservador, um KM menor não é digitado.
 Quando houver falhas, o painel final mostra uma lista rolável com item, placa,
 etapa e a mensagem técnica completa de cada problema.
 
 **Conferir e corrigir KM Atual** percorre a coluna **Atual**, confirma que a
-placa da linha corresponde à placa do XLSX e corrige os valores divergentes. Se o SCPI
-perguntar **“Confirma virada de velocímetro?”**, a extensão responde conforme a
-opção de virada, espera a confirmação terminar e continua para o próximo item.
+placa da linha corresponde à placa do XLSX e corrige os valores divergentes. Se
+o SCPI perguntar **“Confirma virada de velocímetro?”**, a execução pausa sem
+clicar em **Sim** ou **Não**. Depois da decisão no SCPI, use o botão
+correspondente da extensão para continuar.
 Uma falha de edição é registrada no relatório e não impede a conferência dos
 demais KMs.
 As etapas não dependem do progresso salvo pela extensão: se você concluir uma
@@ -116,8 +121,12 @@ antigos e recarrega a extensão pelo Chrome. Ela não altera dados do SCPI.
 
 1. Abra uma **Requisição de Saída** nova, na aba **Itens da Saída**, com a grade vazia.
 2. Abra a extensão e selecione o arquivo `.xlsx` em **Abastecimentos por XLSX**.
-3. A extensão valida o arquivo inteiro e mantém somente **Placa**, **KM**, **Combustível** e **Litros**.
-   Para cada placa, todas as linhas recebem o maior KM encontrado no arquivo.
+3. A extensão invalida a sessão anterior antes de analisar o novo arquivo,
+   valida o arquivo inteiro e mantém somente **Placa**, **KM**, **Combustível** e
+   **Litros**. São aceitos até 500 abastecimentos; KM deve ser um inteiro seguro
+   e Litros deve usar formato decimal comum, sem notação científica. Para cada
+   placa, todas as linhas recebem o maior KM encontrado no arquivo. Um arquivo
+   inválido não reativa os dados do XLSX anterior.
 4. Clique em **Importar XLSX e preencher**. Para cada linha, a extensão confirma
    no **Produto do Pedido** a única opção que contenha **Etanol**, **Diesel** ou
    **Gasolina**, conforme o valor da coluna **Combustível** do XLSX, pesquisa o
@@ -137,19 +146,24 @@ antigos e recarrega a extensão pelo Chrome. Ela não altera dados do SCPI.
    **Já escolhi a placa — continuar** na extensão.
 6. Antes de alterar **Atual**, a extensão compara o KM do XLSX com **Anterior**.
    Com a opção de virada ativada, o maior KM daquela placa no XLSX é inserido
-   mesmo sendo menor que o anterior, e a extensão confirma **Sim**. Desative a
-   opção para usar o modo conservador: um KM menor não é digitado e qualquer
-   confirmação já aberta é respondida com **Não**. KM igual ou maior continua
-   permitido nos dois modos. A preferência é preservada ao limpar os dados da
-   extensão.
+   mesmo sendo menor que o anterior. Se o SCPI pedir confirmação de virada, a
+   extensão pausa e deixa **Sim** e **Não** para a decisão humana. Desative a
+   opção para usar o modo conservador: um KM menor não é digitado. KM igual ou
+   maior continua permitido nos dois modos. A preferência é preservada ao
+   limpar os dados da extensão.
    Quando o SCPI mostrar **Quilometragem MUITO ALTA. Verifique!**, a extensão
-   confirma **OK** automaticamente e continua no mesmo item.
+   pausa sem confirmar **OK**.
 7. Ao terminar, confira toda a grade. A extensão não aciona o botão **Salvar**.
 
-O progresso dos itens e o progresso das QTDs são armazenados separadamente. Se
-a etapa final for interrompida, a extensão retoma diretamente da próxima QTD
-pendente. Se alguma etapa falhar, o erro mostra item, etapa, placa, combustível,
-litros esperados, KM do XLSX, valor encontrado e os métodos de edição tentados.
+O progresso dos itens e o progresso das QTDs são armazenados separadamente e
+vinculados à aba do SCPI onde o XLSX foi iniciado. A retomada em outra aba é
+recusada para impedir que índices salvos sejam aplicados a outra requisição. Se
+a etapa final for interrompida, a extensão retoma diretamente da primeira QTD
+pendente. Falhas parciais permanecem como pendências, mesmo quando outros itens
+foram processados. Antes de retomar ou editar, a extensão valida o produto e a
+placa esperados na linha; uma grade reordenada interrompe o fluxo. Se alguma
+etapa falhar, o erro mostra item, etapa, placa, combustível, litros esperados,
+KM do XLSX, valor encontrado e os métodos de edição tentados.
 Os alertas transitórios de grade ocupada ou dataset fora do modo de edição são
 fechados pela extensão; a célula é reaberta e repetida sem avançar o item.
 As ações usam intervalo adaptativo: operações comuns aguardam no mínimo 250 ms,
@@ -157,8 +171,9 @@ enquanto confirmações, paginação e gravações de QTD/KM preservam a margem 
 segundo. Em todos os casos, a extensão só avança depois que o Ajax e a máscara
 de carregamento terminam. Após `Ajax Error`, `dirty state` ou dataset ainda fora
 do modo de edição, todas as ações voltam temporariamente à margem conservadora.
-Se o uniGUI ainda exibir `Ajax Error`, a extensão clica em **OK** automaticamente
-antes de continuar, evitando que o aviso bloqueie toda a página.
+Se o uniGUI exibir `Ajax Error`, a extensão fecha o aviso para liberar a página,
+mas interrompe a operação atual porque não há confirmação segura de que o SCPI
+a tenha concluído.
 Se, mesmo após as tentativas, um KM ou uma QTD continuar sem aceitar edição, o
 campo é registrado como pulado e a extensão segue para o próximo. Falhas de
 sessão, bloqueio do SCPI e escolhas ambíguas continuam interrompendo o fluxo.
@@ -177,7 +192,10 @@ do próximo teste e confirme a versão exibida ao lado de **Fluxo SCPI**.
 
 ## Leitor de orçamentos
 
-1. Execute uma vez `./scripts/install-native-host.sh`.
+1. Execute uma vez `./scripts/install-native-host.sh`. O instalador compila o
+   leitor e configura automaticamente o caminho atual e o ID da extensão
+   carregada sem compactação. Se o Chrome exibir um ID diferente, passe-o como
+   argumento: `./scripts/install-native-host.sh ID_DA_EXTENSAO`.
 2. Recarregue a extensão em `chrome://extensions`.
 3. Abra a extensão, escolha **Solicitações e cotações** e clique em
    **Ler fotos dos orçamentos**.

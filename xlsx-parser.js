@@ -9,7 +9,11 @@ const numeroBrasileiro = (valor) => {
   if (typeof valor === "number") return valor;
   const texto = String(valor ?? "").trim().replace(/\s/g, "");
   if (!texto) return NaN;
-  if (texto.includes(",")) return Number(texto.replace(/\./g, "").replace(",", "."));
+  if (texto.includes(",")) {
+    if (!/^\d+(?:\.\d{3})*,\d+$/.test(texto)) return NaN;
+    return Number(texto.replace(/\./g, "").replace(",", "."));
+  }
+  if (!/^\d+(?:\.\d+)?$/.test(texto)) return NaN;
   return Number(texto);
 };
 
@@ -65,7 +69,7 @@ export function normalizarAbastecimentos(linhas) {
     const produto = String(valores[indices.produto] ?? "").replace(/\s+/g, " ").trim();
     const litros = numeroBrasileiro(valores[indices.litros]);
     if (!/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(placa)) erros.push(`linha ${numeroLinha}: placa inválida`);
-    if (!Number.isInteger(km) || km < 0) erros.push(`linha ${numeroLinha}: KM inválido`);
+    if (!Number.isSafeInteger(km) || km < 0) erros.push(`linha ${numeroLinha}: KM inválido`);
     if (!produto) erros.push(`linha ${numeroLinha}: combustível não informado`);
     if (!Number.isFinite(litros) || litros <= 0) erros.push(`linha ${numeroLinha}: litros inválidos`);
     abastecimentos.push({ placa, km, produto, litros });
@@ -75,6 +79,9 @@ export function normalizarAbastecimentos(linhas) {
     throw new Error(`Corrija o XLSX antes de continuar: ${erros.slice(0, 5).join("; ")}${erros.length > 5 ? `; e mais ${erros.length - 5}` : ""}.`);
   }
   if (!abastecimentos.length) throw new Error("Nenhum abastecimento válido foi encontrado.");
+  if (abastecimentos.length > 500) {
+    throw new Error("O XLSX deve ter no máximo 500 abastecimentos por execução.");
+  }
 
   return aplicarMaiorKmPorPlaca(abastecimentos);
 }

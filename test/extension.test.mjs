@@ -8,8 +8,12 @@ test("encaminha o OCR pelo service worker", async () => {
   const readerHtml = await readFile(new URL("../leitor.html", import.meta.url), "utf8");
   const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
   const popupHtml = await readFile(new URL("../popup.html", import.meta.url), "utf8");
+  const popupCss = await readFile(new URL("../popup.css", import.meta.url), "utf8");
   const popupJs = await readFile(new URL("../popup.js", import.meta.url), "utf8");
+  const estadoAbastecimentos = await readFile(new URL("../abastecimentos-state.js", import.meta.url), "utf8");
+  const documentacaoXlsx = await readFile(new URL("../output/pdf/Padrao_XLSX_Abastecimentos.pdf", import.meta.url));
   const automation = await readFile(new URL("../automation.js", import.meta.url), "utf8");
+  const instaladorNativo = await readFile(new URL("../scripts/install-native-host.sh", import.meta.url), "utf8");
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url)));
 
   assert.equal(manifest.background.service_worker, "background.js");
@@ -32,6 +36,11 @@ test("encaminha o OCR pelo service worker", async () => {
   assert.match(popupHtml, /id="conferir-placas"/);
   assert.match(popupHtml, /id="conferir-km"/);
   assert.match(popupHtml, /id="permitir-virada-km"/);
+  assert.match(popupHtml, /id="painel-documentacao"/);
+  assert.match(popupHtml, /href="output\/pdf\/Padrao_XLSX_Abastecimentos\.pdf"/);
+  assert.match(popupCss, /body\s*\{[^}]*min-height:\s*600px/s);
+  assert.doesNotMatch(popupJs, /liberarAltura|alturaNatural|pointermove/);
+  assert.equal(documentacaoXlsx.subarray(0, 5).toString(), "%PDF-");
   assert.match(popupHtml, /id="finalizar-processo"/);
   assert.match(popupHtml, /id="versao"/);
   assert.match(popupHtml, /data-fase="fornecedores"/);
@@ -49,6 +58,11 @@ test("encaminha o OCR pelo service worker", async () => {
   assert.match(popupJs, /chrome\.storage\.local\.set\(\{ permitirViradaKm:/);
   assert.match(popupJs, /aplicarMaiorKmPorPlaca\(abastecimentosSalvos\)/);
   assert.match(popupJs, /cacheKmDesatualizado/);
+  assert.match(popupJs, /vincularAbaAbastecimentos\(abaAbastecimentosId, aba\.id\)/);
+  assert.match(popupJs, /chrome\.storage\.local\.remove\(CHAVES_ABASTECIMENTOS\)/);
+  assert.match(popupJs, /falhasAbastecimentos: resultado\.falhasAbastecimentos \|\| \[\]/);
+  assert.match(estadoAbastecimentos, /Continuar pendências/);
+  assert.doesNotMatch(popupHtml, /confirmar a virada com Sim/);
   assert.match(automation, /alreadyRunning: true/);
   assert.match(automation, /Date\.now\(\) < modoConservadorAte/);
   assert.match(automation, /id = "script-prefeitura-painel"/);
@@ -58,6 +72,9 @@ test("encaminha o OCR pelo service worker", async () => {
   assert.match(automation, /globalThis\.__scriptPrefeituraControle = vaiPausar \? "pausar" : null/);
   assert.match(automation, /globalThis\.__scriptPrefeituraControle = "cancelar"/);
   assert.match(automation, /globalThis\.__scriptPrefeituraControle = "finalizar"/);
+  assert.doesNotMatch(automation, /virada confirmada com Sim|virada recusada com Não/);
+  assert.match(instaladorNativo, /plutil -replace path/);
+  assert.match(instaladorNativo, /plutil -replace allowed_origins/);
   assert.equal((popupJs.match(/world: "MAIN"/g) || []).length, 4);
 
   let listener;

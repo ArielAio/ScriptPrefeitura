@@ -23,7 +23,7 @@ export async function executarFaseNoFrame({
   let painelExecucao = null;
   let painelFinalizado = false;
   let observadorErroAjax = null;
-  let erroAjaxDetectado = null;
+  let erroAjaxPendente = null;
   let fechamentoErroAjaxEmAndamento = null;
   let modoConservadorAte = 0;
   let messageDlgBloqueanteDetectado = false;
@@ -767,6 +767,13 @@ export async function executarFaseNoFrame({
     let contexto = contextoCelulaExt(registro, indiceColuna);
     if (!contexto) return { ok: false, motivo: "grade ou célula não vinculada ao ExtJS" };
     let plugin = pluginEdicaoDaGrade(contexto.grade);
+    if (!plugin || typeof plugin.fireEvent !== "function") {
+      return {
+        ok: false,
+        motivo: "o plugin de edição do ExtJS não foi localizado",
+        metodos: ["editor inline"],
+      };
+    }
     const editavel = plugin?.isCellEditable?.(contexto.record, contexto.coluna);
     if (editavel === false) {
       return {
@@ -1005,6 +1012,7 @@ export async function executarFaseNoFrame({
       await aguardarGradePronta(`o SCPI concluir a gravação de ${descricaoCelula}`);
       return true;
     } catch (erro) {
+      if (erroImpedeContinuar(erro)) throw erro;
       const rejeicaoRecuperavel = erro instanceof Error && [
         "__SCRIPT_PREFEITURA_GRADE_SUJA__",
         "__SCRIPT_PREFEITURA_DATASET_FORA_DE_EDICAO__",
@@ -1168,8 +1176,19 @@ export async function executarFaseNoFrame({
     const mensagem = normalizar(erro instanceof Error ? erro.message : String(erro));
     return mensagem.includes("SCRIPT PREFEITURA CANCELADO")
       || mensagem.includes("SCRIPT PREFEITURA FINALIZADO")
+      || mensagem.includes("SCRIPT PREFEITURA VIRADA MANUAL")
+      || mensagem.includes("SCRIPT PREFEITURA KM ALTO MANUAL")
+      || mensagem.includes("SCRIPT PREFEITURA LINHA INCOMPATIVEL")
       || mensagem.includes("O SCPI INTERROMPEU A EXECUCAO")
+      || mensagem.includes("O SCPI EXIBIU AJAX ERROR")
+      || /(COLUNAS?.+NAO (?:FOI|FORAM) LOCALIZAD|GRADE.+NAO FOI LOCALIZAD|ITEM \d+ NAO FOI LOCALIZAD|LINHA \d+ PERTENCE A PLACA|CELULA.+NAO FOI LOCALIZAD)/.test(mensagem)
       || /(429|TOO MANY REQUESTS|SESSAO (EXPIRADA|ENCERRADA|EXPIROU)|ACESSO (BLOQUEADO|NEGADO))/.test(mensagem);
+  };
+
+  const erroPausaManual = (codigo, mensagem) => {
+    const erro = new Error(codigo);
+    erro.mensagemUsuario = mensagem;
+    return erro;
   };
 
   const avisoKmMuitoAltaAberto = () => [
@@ -1201,11 +1220,9 @@ export async function executarFaseNoFrame({
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       if (visivel(aviso)) throw new Error("O Ajax Error não fechou após clicar em OK.");
-      if (erroAjaxDetectado !== mensagem) {
-        erroAjaxDetectado = mensagem;
-        modoConservadorAte = Date.now() + 30000;
-        resposta.etapas.push(`Ajax Error fechado automaticamente: ${mensagem.slice(0, 500)}`);
-      }
+      erroAjaxPendente = mensagem;
+      modoConservadorAte = Date.now() + 30000;
+      resposta.etapas.push(`Ajax Error fechado; a execução será interrompida: ${mensagem.slice(0, 500)}`);
       return true;
     })();
     try {
@@ -1239,22 +1256,17 @@ export async function executarFaseNoFrame({
       throw new Error("__SCRIPT_PREFEITURA_FINALIZADO__");
     }
     await fecharErroAjax();
+    if (erroAjaxPendente) {
+      const mensagem = erroAjaxPendente;
+      erroAjaxPendente = null;
+      throw new Error(`O SCPI exibiu Ajax Error e a operação atual não foi confirmada: ${mensagem}`);
+    }
     const avisoKmMuitoAlta = avisoKmMuitoAltaAberto();
     if (avisoKmMuitoAlta) {
-      const confirmar = [...avisoKmMuitoAlta.querySelectorAll?.('button, [role="button"], a') || []]
-        .find((elemento) => normalizar(texto(elemento)) === "OK" && habilitado(elemento));
-      if (!confirmar) {
-        throw new Error("O aviso de quilometragem muito alta apareceu, mas o botão OK não foi localizado.");
-      }
-      clicar(confirmar);
-      const limite = Date.now() + timeoutMs;
-      while (visivel(avisoKmMuitoAlta) && Date.now() < limite) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (visivel(avisoKmMuitoAlta)) {
-        throw new Error("O aviso de quilometragem muito alta não fechou após clicar em OK.");
-      }
-      resposta.etapas.push("Aviso de quilometragem muito alta confirmado automaticamente com OK.");
+      throw erroPausaManual(
+        "__SCRIPT_PREFEITURA_KM_ALTO_MANUAL__",
+        "O SCPI informou quilometragem muito alta. Confira o valor, clique em OK manualmente e depois continue.",
+      );
     }
     return Date.now() - inicioPausa;
   }
@@ -1285,7 +1297,8 @@ export async function executarFaseNoFrame({
   const verificarBloqueio = () => {
     const confirmacaoKm = confirmacaoKmAberta();
     if (confirmacaoKm) {
-      throw new Error(
+      throw erroPausaManual(
+        "__SCRIPT_PREFEITURA_VIRADA_MANUAL__",
         "O KM do XLSX é menor que a KM Anterior do veículo. Escolha Sim ou Não na confirmação de virada de velocímetro do SCPI e depois continue.",
       );
     }
@@ -1326,19 +1339,10 @@ export async function executarFaseNoFrame({
       }
     }
     if (!confirmacao) return null;
-    const acao = permitirViradaKm ? "SIM" : "NAO";
-    const botaoAcao = [...confirmacao.querySelectorAll?.('button, [role="button"], a') || []]
-      .find((elemento) => normalizar(texto(elemento)) === acao && habilitado(elemento));
-    if (!botaoAcao) {
-      throw new Error(`O botão ${permitirViradaKm ? "Sim" : "Não"} da confirmação de virada de velocímetro não foi localizado.`);
-    }
-    clicar(botaoAcao);
-    ultimaRequisicaoEm = Date.now();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await aguardarAjaxLivre(`o SCPI ${permitirViradaKm ? "confirmar" : "recusar"} a virada de velocímetro`);
-    await esperar("a confirmação de virada de velocímetro fechar", () => !visivel(confirmacao));
-    await aguardarMs(intervaloSeguro);
-    return acao;
+    throw erroPausaManual(
+      "__SCRIPT_PREFEITURA_VIRADA_MANUAL__",
+      "O KM do XLSX é menor que a KM Anterior do veículo. Escolha Sim ou Não na confirmação de virada de velocímetro do SCPI e depois continue.",
+    );
   };
 
   const botaoComFinal = (rotulo) =>
@@ -1431,6 +1435,36 @@ export async function executarFaseNoFrame({
     return placaCompacta(texto(registro?.celulas?.[indicePlaca])) === placaCompacta(placa);
   };
 
+  const erroLinhaIncompativel = (mensagem) =>
+    new Error(`__SCRIPT_PREFEITURA_LINHA_INCOMPATIVEL__: ${mensagem}`);
+
+  const validarProdutoDoRegistro = (indice, abastecimento) => {
+    const registro = registroSaida(indice);
+    if (!registro?.linha) throw erroLinhaIncompativel(`O item ${indice + 1} não foi localizado na grade.`);
+    const esperado = tipoCombustivel(abastecimento.produto);
+    const encontrado = tipoCombustivel(texto(registro.linha));
+    if (encontrado !== esperado) {
+      throw erroLinhaIncompativel(
+        `O item ${indice + 1} contém ${encontrado || "combustível não identificado"}, mas o XLSX espera ${esperado}.`,
+      );
+    }
+    return registro;
+  };
+
+  const validarPlacaDoRegistro = (indice, abastecimento, obrigatoria = true) => {
+    const registro = registroSaida(indice);
+    if (!registro?.linha) throw erroLinhaIncompativel(`O item ${indice + 1} não foi localizado na grade.`);
+    const indicePlaca = registro.cabecalhos.findIndex((nome) => nome.startsWith("PLACA"));
+    if (indicePlaca < 0) throw erroLinhaIncompativel("A coluna Placa não foi localizada na grade.");
+    const encontrada = placaCompacta(texto(registro.celulas[indicePlaca]));
+    if (obrigatoria && encontrada !== placaCompacta(abastecimento.placa)) {
+      throw erroLinhaIncompativel(
+        `O item ${indice + 1} pertence à placa ${encontrada || "<vazia>"}, mas o XLSX informa ${abastecimento.placa}.`,
+      );
+    }
+    return registro;
+  };
+
   const selecionarCentroCusto = async (indice, placa, fecharSeNaoEncontrada = false) => {
     let registro = registroSaida(indice);
     if (registroTemPlacaExata(registro, placa)) return { alterado: false };
@@ -1484,16 +1518,9 @@ export async function executarFaseNoFrame({
     await esperar("a Pesquisa Centro de Custo fechar", () => !visivel(janela));
     const messageDlgDuranteCentroCusto = messageDlgBloqueanteDetectado;
     messageDlgBloqueanteDetectado = false;
-    const acaoVirada = await resolverViradaKm(messageDlgDuranteCentroCusto);
-    if (messageDlgDuranteCentroCusto && !acaoVirada) {
+    const confirmacaoVirada = await resolverViradaKm(messageDlgDuranteCentroCusto);
+    if (messageDlgDuranteCentroCusto && !confirmacaoVirada) {
       throw new Error("O SCPI rejeitou um MessageDlg bloqueante, mas a confirmação de virada de velocímetro não apareceu.");
-    }
-    if (acaoVirada) {
-      resposta.etapas.push(
-        acaoVirada === "SIM"
-          ? `Virada de velocímetro da placa ${placa} confirmada automaticamente com Sim.`
-          : `Virada de velocímetro da placa ${placa} recusada automaticamente com Não pelo modo conservador.`,
-      );
     }
     await aguardarGradePronta(`a grade atualizar o centro de custo do item ${indice + 1}`);
     await rolarItensSaida("direita");
@@ -1512,11 +1539,14 @@ export async function executarFaseNoFrame({
       if (!Array.isArray(abastecimentos) || !abastecimentos.length) {
         throw new Error("Nenhum abastecimento válido foi recebido do XLSX.");
       }
+      if (abastecimentos.length > 500) {
+        throw new Error("A execução aceita no máximo 500 abastecimentos por XLSX.");
+      }
       if (abastecimentos.some((item) =>
         !/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(String(item?.placa || ""))
         || !Number.isFinite(Number(item?.litros))
         || Number(item.litros) <= 0
-        || (fase === "conferir_km" && (!Number.isInteger(Number(item?.km)) || Number(item.km) < 0)))) {
+        || (fase === "conferir_km" && (!Number.isSafeInteger(Number(item?.km)) || Number(item.km) < 0)))) {
         throw new Error("Os dados de placa, litros ou KM recebidos do XLSX são inválidos.");
       }
       const itensSaida = await esperar("a aba Itens da Saída aparecer", () => aba("Itens da Saída"));
@@ -1546,6 +1576,10 @@ export async function executarFaseNoFrame({
             `conferindo item ${indice + 1}`,
           );
           try {
+            await rolarItensSaida("direita");
+            validarPlacaDoRegistro(indice, abastecimento);
+            await rolarItensSaida("esquerda");
+            validarProdutoDoRegistro(indice, abastecimento);
             const registro = registroSaida(indice);
             const indiceQuantidade = registro?.cabecalhos?.indexOf("QTD") ?? -1;
             if (indiceQuantidade < 0) {
@@ -1596,7 +1630,6 @@ export async function executarFaseNoFrame({
 
       if (fase === "conferir_km") {
         let corrigidos = 0;
-        let viradasConfirmadas = 0;
         await rolarItensSaida("direita");
         for (let indice = 0; indice < abastecimentos.length; indice += 1) {
           await aguardarControle();
@@ -1614,8 +1647,7 @@ export async function executarFaseNoFrame({
             `conferindo ${abastecimento.placa}`,
           );
           try {
-            let acaoVirada = await resolverViradaKm();
-            if (acaoVirada === "SIM") viradasConfirmadas += 1;
+            await resolverViradaKm();
             let registro = await selecionarRegistroSaida(indice);
             const indicePlaca = registro?.cabecalhos?.findIndex((nome) => nome.startsWith("PLACA")) ?? -1;
             const indiceAnterior = registro?.cabecalhos?.indexOf("ANTERIOR") ?? -1;
@@ -1651,11 +1683,9 @@ export async function executarFaseNoFrame({
                   `KM Atual do item ${indice + 1}`,
                   true,
                 );
-                const acaoAposEdicao = await resolverViradaKm(
+                await resolverViradaKm(
                   Number.isFinite(kmAnterior) && kmEsperado < kmAnterior,
                 );
-                acaoVirada ||= acaoAposEdicao;
-                if (acaoAposEdicao === "SIM") viradasConfirmadas += 1;
                 await aguardarGradePronta(`o SCPI concluir o KM Atual do item ${indice + 1}`);
                 registro = registroSaida(indice);
                 const confirmado = numeroDaGrade(texto(registro?.celulas?.[indiceAtual]));
@@ -1670,8 +1700,7 @@ export async function executarFaseNoFrame({
             resposta.etapas.push(
               ignorado
                 ? `KM ${indice + 1}/${abastecimentos.length}: ${abastecimento.placa} mantido sem alteração; ${kmEsperado} é menor que o anterior ${kmAnterior}.`
-                : `KM ${indice + 1}/${abastecimentos.length}: ${abastecimento.placa} ${alterado ? `corrigido para ${kmEsperado}` : "correto"}`
-                  + `${acaoVirada === "SIM" ? "; virada confirmada com Sim" : acaoVirada === "NAO" ? "; virada recusada com Não" : ""}.`,
+                : `KM ${indice + 1}/${abastecimentos.length}: ${abastecimento.placa} ${alterado ? `corrigido para ${kmEsperado}` : "correto"}.`,
             );
           } catch (erro) {
             if (erroImpedeContinuar(erro)) throw erro;
@@ -1687,7 +1716,7 @@ export async function executarFaseNoFrame({
             );
           }
         }
-        const resumo = `Verificação concluída: ${abastecimentos.length} KM(s), ${corrigidos} corrigido(s), ${resposta.kmsIgnorados.length} mantido(s) pelo modo conservador, ${viradasConfirmadas} virada(s) confirmada(s) e ${resposta.falhasAbastecimentos.length} falha(s) técnica(s).`;
+        const resumo = `Verificação concluída: ${abastecimentos.length} KM(s), ${corrigidos} corrigido(s), ${resposta.kmsIgnorados.length} mantido(s) pelo modo conservador e ${resposta.falhasAbastecimentos.length} falha(s) técnica(s).`;
         const relatorioTexto = resumo + montarRelatorioFalhas(resposta.falhasAbastecimentos);
         resposta.etapas.push(relatorioTexto);
         publicarProgressoAbastecimento("Concluído", abastecimentos.length - 1, abastecimentos.length, resumo);
@@ -1700,7 +1729,6 @@ export async function executarFaseNoFrame({
             total: abastecimentos.length,
             corrigidos,
             ignoradosPorRegra: resposta.kmsIgnorados,
-            viradasConfirmadas,
             falhas: resposta.falhasAbastecimentos,
             texto: relatorioTexto,
           },
@@ -1805,12 +1833,15 @@ export async function executarFaseNoFrame({
       if (!Array.isArray(abastecimentos) || !abastecimentos.length) {
         throw new Error("Nenhum abastecimento válido foi recebido do XLSX.");
       }
+      if (abastecimentos.length > 500) {
+        throw new Error("A execução aceita no máximo 500 abastecimentos por XLSX.");
+      }
       if (abastecimentos.some((item) =>
         !/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(String(item?.placa || ""))
         || !tipoCombustivel(item?.produto)
         || !Number.isFinite(Number(item?.litros))
         || Number(item.litros) <= 0
-        || !Number.isInteger(Number(item?.km))
+        || !Number.isSafeInteger(Number(item?.km))
         || Number(item.km) < 0)) {
         throw new Error("Os dados de placa, combustível, litros ou KM recebidos do XLSX são inválidos.");
       }
@@ -1820,14 +1851,24 @@ export async function executarFaseNoFrame({
       await esperar("a aba Itens da Saída abrir", () => abaSelecionada(itensSaida));
       await rolarItensSaida("esquerda");
 
-      const linhasIniciais = registroSaida(indiceAbastecimentoInicial)?.linhas || [];
-      if (indiceAbastecimentoInicial === 0 && linhasIniciais.length) {
-        const compativeis = linhasIniciais.length <= abastecimentos.length
-          && linhasIniciais.every((linha, indice) =>
-            tipoCombustivel(texto(linha)) === tipoCombustivel(abastecimentos[indice]?.produto));
-        if (!compativeis) {
-          throw new Error("A grade já contém itens diferentes do XLSX. Abra uma Requisição de Saída vazia ou carregue a planilha correspondente.");
-        }
+      const linhasIniciais = registroSaida(0)?.linhas || [];
+      if (linhasIniciais.length > abastecimentos.length) {
+        throw erroLinhaIncompativel(
+          `A grade possui ${linhasIniciais.length} itens, mas o XLSX possui somente ${abastecimentos.length}.`,
+        );
+      }
+      for (let indice = 0; indice < linhasIniciais.length; indice += 1) {
+        validarProdutoDoRegistro(indice, abastecimentos[indice]);
+      }
+      await rolarItensSaida("direita");
+      for (let indice = 0; indice < linhasIniciais.length; indice += 1) {
+        validarPlacaDoRegistro(indice, abastecimentos[indice], indice < indiceAbastecimentoInicial);
+      }
+      await rolarItensSaida("esquerda");
+      if (linhasIniciais.length < indiceAbastecimentoInicial) {
+        throw erroLinhaIncompativel(
+          `O progresso indica ${indiceAbastecimentoInicial} itens concluídos, mas a grade possui ${linhasIniciais.length}.`,
+        );
       }
       if (indiceAbastecimentoInicial > abastecimentos.length) {
         throw new Error("O progresso salvo é maior que a quantidade de linhas do XLSX.");
@@ -1838,6 +1879,9 @@ export async function executarFaseNoFrame({
       if (indiceQuantidadeAbastecimentoInicial > 0 && indiceAbastecimentoInicial < abastecimentos.length) {
         throw new Error("O progresso salvo está inconsistente: há QTDs concluídas antes de todos os itens serem cadastrados.");
       }
+
+      let primeiroKmPendente = null;
+      let primeiraQtdPendente = null;
 
       for (let indice = indiceAbastecimentoInicial; indice < abastecimentos.length; indice += 1) {
         await aguardarControle();
@@ -1856,6 +1900,8 @@ export async function executarFaseNoFrame({
           atualizarEtapaAbastecimento("selecionar Produto do Pedido");
           await abrirProdutoDoPedido(indice, abastecimento.produto);
           resposta.etapas.push(`${indice + 1}/${abastecimentos.length}: ${abastecimento.produto} confirmado no Produto do Pedido.`);
+        } else {
+          validarProdutoDoRegistro(indice, abastecimento);
         }
         await rolarItensSaida("esquerda");
         let registro = registroSaida(indice);
@@ -1888,7 +1934,6 @@ export async function executarFaseNoFrame({
         const kmEsperado = Number(abastecimento.km);
         let kmAnterior = Number.NaN;
         let kmAlterado = false;
-        let acaoVirada = null;
         let kmIgnorado = false;
         let erroKm = null;
         let indiceAtual = -1;
@@ -1925,7 +1970,7 @@ export async function executarFaseNoFrame({
               `KM Atual do item ${indice + 1}`,
               true,
             );
-            acaoVirada = await resolverViradaKm(
+            await resolverViradaKm(
               Number.isFinite(kmAnterior) && kmEsperado < kmAnterior,
             );
             await aguardarGradePronta(`o SCPI concluir o KM Atual do item ${indice + 1}`);
@@ -1941,6 +1986,7 @@ export async function executarFaseNoFrame({
         } catch (erro) {
           if (erroImpedeContinuar(erro)) throw erro;
           erroKm = erro instanceof Error ? erro.message : String(erro);
+          primeiroKmPendente ??= indice;
           if (indiceAtual >= 0) cancelarEdicaoDaCelula(registroSaida(indice), indiceAtual);
           await resolverViradaKm();
           resposta.falhasAbastecimentos.push({
@@ -1959,7 +2005,7 @@ export async function executarFaseNoFrame({
         resposta.etapas.push(
           `${indice + 1}/${abastecimentos.length}: ${abastecimento.placa}, ${abastecimento.litros} L, KM ${abastecimento.km}`
           + ` (${erroKm ? "KM pulado após erro irrecuperável" : kmIgnorado ? "KM mantido pelo modo conservador" : kmAlterado ? "KM alterado" : "KM conferido"}`
-          + `${acaoVirada === "SIM" ? "; virada confirmada com Sim" : acaoVirada === "NAO" ? "; virada recusada com Não" : ""}; QTD pendente para a etapa final).`,
+          + "; QTD pendente para a etapa final).",
         );
       }
 
@@ -1985,6 +2031,10 @@ export async function executarFaseNoFrame({
         );
         let quantidadeAlterada = false;
         try {
+          await rolarItensSaida("direita");
+          validarPlacaDoRegistro(indice, abastecimento);
+          await rolarItensSaida("esquerda");
+          validarProdutoDoRegistro(indice, abastecimento);
           const registro = registroSaida(indice);
           const indiceQuantidade = registro?.cabecalhos?.indexOf("QTD") ?? -1;
           if (indiceQuantidade < 0) {
@@ -2004,6 +2054,7 @@ export async function executarFaseNoFrame({
         } catch (erro) {
           if (erroImpedeContinuar(erro)) throw erro;
           const mensagem = erro instanceof Error ? erro.message : String(erro);
+          primeiraQtdPendente ??= indice;
           resposta.falhasAbastecimentos.push({
             indice: indice + 1,
             placa: abastecimento.placa,
@@ -2017,9 +2068,15 @@ export async function executarFaseNoFrame({
         indiceQuantidadeAbastecimentoAtual = indice + 1;
       }
 
+      const indiceItensFinal = primeiroKmPendente ?? abastecimentos.length;
+      const indiceQtdFinal = primeiraQtdPendente ?? abastecimentos.length;
+      indiceAbastecimentoAtual = indiceItensFinal;
+      indiceQuantidadeAbastecimentoAtual = indiceQtdFinal;
       publicarProgressoAbastecimento(
-        "Concluído",
-        abastecimentos.length - 1,
+        resposta.falhasAbastecimentos.length ? "Pendências" : "Concluído",
+        resposta.falhasAbastecimentos.length
+          ? Math.min(indiceItensFinal, indiceQtdFinal)
+          : abastecimentos.length - 1,
         abastecimentos.length,
         resposta.falhasAbastecimentos.length
           ? `${resposta.falhasAbastecimentos.length} campo(s) pulado(s)`
@@ -2033,8 +2090,9 @@ export async function executarFaseNoFrame({
       return {
         ...resposta,
         ok: true,
-        indiceAbastecimento: abastecimentos.length,
-        indiceQuantidadeAbastecimento: abastecimentos.length,
+        partial: resposta.falhasAbastecimentos.length > 0,
+        indiceAbastecimento: indiceItensFinal,
+        indiceQuantidadeAbastecimento: indiceQtdFinal,
         centroCustoPendente: null,
         proximaFase: null,
       };
@@ -2441,6 +2499,24 @@ export async function executarFaseNoFrame({
 
     throw new Error("Fase da automação inválida.");
   } catch (erro) {
+    if (erro instanceof Error && [
+      "__SCRIPT_PREFEITURA_VIRADA_MANUAL__",
+      "__SCRIPT_PREFEITURA_KM_ALTO_MANUAL__",
+    ].includes(erro.message)) {
+      const mensagem = erro.mensagemUsuario || "Há uma confirmação pendente no SCPI.";
+      resposta.etapas.push(`Pausa: ${mensagem}`);
+      finalizarPainelExecucao("pausado", mensagem);
+      return {
+        ...resposta,
+        ok: true,
+        paused: true,
+        indiceProduto: indiceProdutoAtual,
+        indiceAbastecimento: indiceAbastecimentoAtual,
+        indiceQuantidadeAbastecimento: indiceQuantidadeAbastecimentoAtual,
+        centroCustoPendente: centroCustoPendenteAtual,
+        produtoPendente: null,
+      };
+    }
     if (erro instanceof Error && erro.message.includes("__SCRIPT_PREFEITURA_FINALIZADO__")) {
       const progresso = globalThis.__scriptPrefeituraProgresso;
       const cabecalhoProgresso = progresso?.total

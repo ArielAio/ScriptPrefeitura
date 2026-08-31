@@ -1,10 +1,10 @@
 {
   "name": "script-prefeitura",
-  "version": "0.13.28",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check automation.js && node --check background.js && node --check ocr-parser.js && node --check xlsx-parser.js && node --check leitor.js && node --check popup.js && node --check scpi-tab.js",
+    "check": "node --check abastecimentos-state.js && node --check automation.js && node --check background.js && node --check ocr-parser.js && node --check xlsx-parser.js && node --check leitor.js && node --check popup.js && node --check scpi-tab.js && zsh -n scripts/install-native-host.sh && python3 -c \"compile(open('scripts/generate-documentation.py', encoding='utf-8').read(), 'scripts/generate-documentation.py', 'exec')\"",
     "test": "node --test"
   }
 }

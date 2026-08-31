@@ -1,7 +1,7 @@
 {
   "name": "br.gov.sjduaspontes.scriptprefeitura.ocr",
   "description": "OCR local para a extensão Fluxo SCPI",
-  "path": "/Users/arielaio/Desktop/Arquivos/Projetos/ScriptPrefeitura/native-host/script-prefeitura-ocr",
+  "path": "/CAMINHO/DEFINIDO/PELO/INSTALADOR/script-prefeitura-ocr",
   "type": "stdio",
-  "allowed_origins": ["chrome-extension://hjlgjjlckddbkeeidlbiaipkpehfncei/"]
+  "allowed_origins": ["chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"]
 }
