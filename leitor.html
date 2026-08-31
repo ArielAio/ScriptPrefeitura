@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Leitor de Orçamentos — Fluxo SCPI</title>
+    <style>
+      :root { color-scheme: light; font: 15px system-ui, sans-serif; color: #123; background: #f4f7f7; }
+      body { max-width: 1100px; margin: 0 auto; padding: 28px; }
+      h1 { margin: 0 0 8px; }
+      .marca-app { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+      .marca-app img { display: block; flex: none; }
+      .marca-app h1 { margin: 0; }
+      .produto { display: block; margin-bottom: 2px; color: #087b76; font-size: 13px; font-weight: 800; }
+      .intro { margin: 0 0 24px; color: #456; }
+      .painel, article { padding: 20px; border: 1px solid #ccd8d8; border-radius: 10px; background: white; box-shadow: 0 2px 8px #1231; }
+      .painel { transition: border-color .15s, background .15s, box-shadow .15s; }
+      .painel.dragging { border-color: #007d78; background: #eaf8f7; box-shadow: 0 0 0 3px #007d7833; }
+      .drop-hint { margin: 0 0 14px; color: #456; font-weight: 650; }
+      .acoes { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      input[type="file"] { max-width: 100%; }
+      button { padding: 10px 18px; border: 0; border-radius: 6px; color: white; background: #006b68; font-weight: 700; cursor: pointer; }
+      button:disabled { opacity: .55; cursor: wait; }
+      .add-item { margin-top: 14px; }
+      .delete-item { padding: 7px 10px; background: #a01919; }
+      #status { min-height: 22px; margin: 14px 0 0; white-space: pre-line; }
+      #status[data-type="error"], .invalid { color: #a01919; }
+      #status[data-type="success"], .valid { color: #08752c; }
+      #results { display: grid; gap: 18px; margin-top: 20px; }
+      article h2 { margin: 0 0 12px; font-size: 18px; }
+      .preview { display: block; max-width: min(100%, 420px); max-height: 300px; margin: 0 0 14px; border: 1px solid #ccd8d8; object-fit: contain; }
+      .cnpj { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; }
+      .cnpj label { display: flex; align-items: center; gap: 8px; }
+      .cnpj input { width: 230px; }
+      .totals { font-weight: 700; }
+      table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+      th, td { padding: 8px; border: 1px solid #d5dddd; text-align: left; vertical-align: top; }
+      th { background: #eef4f4; }
+      th:last-child, td:last-child { width: 1%; white-space: nowrap; }
+      input[type="text"], input[type="number"] { box-sizing: border-box; width: 100%; min-width: 80px; padding: 7px; border: 1px solid #aebbbb; border-radius: 4px; }
+      .hint { display: block; margin-top: 4px; color: #8a5500; }
+      details { margin-top: 12px; }
+      pre { max-height: 220px; overflow: auto; padding: 10px; background: #f5f7f7; white-space: pre-wrap; }
+      .warning { margin: 10px 0 0; color: #8a5500; }
+    </style>
+  </head>
+  <body>
+    <div class="marca-app">
+      <img src="assets/icons/fluxo-scpi-48.png" alt="" width="44" height="44" />
+      <div><span class="produto">Fluxo SCPI</span><h1>Leitor de Orçamentos</h1></div>
+    </div>
+    <p class="intro">Selecione de uma a três fotos ou PDFs convertidos em imagem. A leitura acontece somente neste Mac e não preenche o SCPI.</p>
+    <section id="drop-zone" class="painel">
+      <p class="drop-hint">Arraste de uma a três fotos para qualquer ponto desta página. A extração começa automaticamente.</p>
+      <div class="acoes">
+        <input id="files" type="file" accept="image/jpeg,image/png,image/heic,image/heif" multiple />
+        <button id="analyze" type="button">Extrair dados</button>
+        <button id="save-products" type="button" hidden>Usar produtos e fornecedores</button>
+      </div>
+      <p id="status" role="status" aria-live="polite"></p>
+    </section>
+    <main id="results"></main>
+    <script type="module" src="leitor.js"></script>
+  </body>
+</html>

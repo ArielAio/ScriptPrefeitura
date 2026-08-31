@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Fluxo SCPI",
+  "version": "0.13.28",
+  "description": "Executa procedimentos assistidos na sessão aberta do SCPI 9.0.",
+  "icons": {
+    "16": "assets/icons/fluxo-scpi-16.png",
+    "32": "assets/icons/fluxo-scpi-32.png",
+    "48": "assets/icons/fluxo-scpi-48.png",
+    "128": "assets/icons/fluxo-scpi-128.png"
+  },
+  "permissions": ["activeTab", "nativeMessaging", "scripting", "storage"],
+  "host_permissions": ["https://srv.sjduaspontes.sp.gov.br/*"],
+  "action": {
+    "default_title": "Fluxo SCPI",
+    "default_icon": {
+      "16": "assets/icons/fluxo-scpi-16.png",
+      "32": "assets/icons/fluxo-scpi-32.png"
+    },
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

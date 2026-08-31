@@ -1,0 +1,10 @@
+{
+  "name": "script-prefeitura",
+  "version": "0.13.28",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check automation.js && node --check background.js && node --check ocr-parser.js && node --check xlsx-parser.js && node --check leitor.js && node --check popup.js && node --check scpi-tab.js",
+    "test": "node --test"
+  }
+}

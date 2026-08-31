@@ -1,0 +1,20 @@
+.DS_Store
+node_modules/
+*.log
+.env
+.env.*
+!.env.example
+artifacts/
+native-host/script-prefeitura-ocr
+
+# Arquivos locais que podem conter dados de fornecedores ou do município
+/data/
+/uploads/
+/*.csv
+/*.heic
+/*.jpeg
+/*.jpg
+/*.pdf
+/*.png
+/*.xls
+/*.xlsx
